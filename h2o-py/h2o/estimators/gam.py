@@ -7,6 +7,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import h2o
+from h2o.utils.typechecks import U
 from h2o.estimators.estimator_base import H2OEstimator
 from h2o.exceptions import H2OValueError
 from h2o.frame import H2OFrame
@@ -947,7 +948,7 @@ class H2OGeneralizedAdditiveEstimator(H2OEstimator):
     @property
     def knot_ids(self):
         """
-        String arrays storing frame keys of knots.  One for each gam column specified in gam_columns
+        String arrays storing frame keys of knots.  One for each gam column set specified in gam_columns
 
         Type: ``List[str]``.
         """
@@ -962,22 +963,26 @@ class H2OGeneralizedAdditiveEstimator(H2OEstimator):
     @property
     def gam_columns(self):
         """
-        Predictor column names for gam
+        Arrays of predictor column names for gam for smoothers using single or multiple predictors like
+        {{'c1'},{'c2','c3'},{'c4'},...}
 
-        Type: ``List[str]``.
+        Type: ``List[List[str]]``.
         """
         return self._parms.get("gam_columns")
 
     @gam_columns.setter
     def gam_columns(self, gam_columns):
-        assert_is_type(gam_columns, None, [str])
+        assert_is_type(gam_columns, None, [U(str, [str])])
+        if gam_columns:  # standardize as a nested list
+            gam_columns = [[g] if isinstance(g, str) else g for g in gam_columns]
         self._parms["gam_columns"] = gam_columns
 
 
     @property
     def bs(self):
         """
-        Basis function type for each gam predictors, 0 for cr
+        Basis function type for each gam predictors, 0 for cr, 1 for thin plate regression with knots, 2 for thin plate
+        regression with SVD.  If specified, must be the same size as gam_columns
 
         Type: ``List[int]``.
         """
@@ -992,7 +997,7 @@ class H2OGeneralizedAdditiveEstimator(H2OEstimator):
     @property
     def scale(self):
         """
-        Smoothing parameter for gam predictors
+        Smoothing parameter for gam predictors.  If specified, must be of the same length as gam_columns
 
         Type: ``List[float]``.
         """
@@ -1048,4 +1053,8 @@ class H2OGeneralizedAdditiveEstimator(H2OEstimator):
         """
         :return: Gam columns if specified.
         """
-        return parms["gam_columns"]
+        gam_columns = parms["gam_columns"]
+        flat_gam_columns = []
+        for col in gam_columns:
+            flat_gam_columns.extend(col)
+        return flat_gam_columns
