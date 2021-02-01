@@ -10,7 +10,7 @@ import matplotlib
 import matplotlib.colors
 import matplotlib.figure
 from h2o.utils.ext_dependencies import get_matplotlib_pyplot
-
+from h2o.utils.shared_utils import can_use_pandas
 
 
 def _display(object):
@@ -20,7 +20,7 @@ def _display(object):
     :returns: the input
     """
     plt = get_matplotlib_pyplot(False, raise_if_not_available=True)
-    if isinstance(object, matplotlib.figure.Figure) and matplotlib.get_backend().lower() != "agg":
+    if isinstance(object, H2OFigureContainer) and matplotlib.get_backend().lower() != "agg":
         plt.show()
     else:
         try:
@@ -28,8 +28,8 @@ def _display(object):
             IPython.display.display(object)
         except ImportError:
             print(object)
-    if isinstance(object, matplotlib.figure.Figure):
-        plt.close(object)
+    if isinstance(object, H2OFigureContainer):
+        plt.close(object.figure)
         print("\n")
     return object
 
@@ -41,8 +41,8 @@ def _dont_display(object):
     :returns: input
     """
     plt = get_matplotlib_pyplot(False, raise_if_not_available=True)
-    if isinstance(object, matplotlib.figure.Figure):
-        plt.close()
+    if isinstance(object, H2OFigureContainer):
+        plt.close(object.figure)
     return object
 
 
@@ -149,6 +149,31 @@ class H2OExplanation(OrderedDict):
             display(v)
 
 
+class H2OFigureContainer:
+    def __init__(self, figure, data=None, columns=None, index=None):
+        self._fig = figure
+        self._data = data
+        self._columns = columns
+        self._index = index
+
+    @property
+    def figure(self):
+        return self._fig
+
+    def get_data(self, use_pandas=can_use_pandas()):
+        if self._data is None:
+            return None
+        if use_pandas:
+            import pandas
+            return pandas.DataFrame(self._data, columns=self._columns, index=self._index)
+        return self._data, self._columns, self._index
+
+    def _ipython_display_(self):
+        if matplotlib.get_backend().lower() == "agg":
+            from IPython.display import display
+            display(self.figure)
+
+
 @contextmanager
 def no_progress():
     """
@@ -158,9 +183,11 @@ def no_progress():
     progress = h2o.job.H2OJob.__PROGRESS_BAR__
     if progress:
         h2o.no_progress()
-    yield
-    if progress:
-        h2o.show_progress()
+    try:
+        yield
+    finally:
+        if progress:
+            h2o.show_progress()
 
 
 class NumpyFrame:
@@ -528,7 +555,7 @@ def shap_summary_plot(
         colormap=None,  # type: str
         figsize=(12, 12),  # type: Union[Tuple[float], List[float]]
         jitter=0.35  # type: float
-):  # type: (...) -> plt.Figure
+):  # type: (...) -> H2OFigureContainer
     """
     SHAP summary plot
 
@@ -644,7 +671,7 @@ def shap_summary_plot(
     plt.title("SHAP Summary plot for \"{}\"".format(model.model_id))
     plt.tight_layout()
     fig = plt.gcf()
-    return fig
+    return H2OFigureContainer(fig, contributions._data, contributions.columns)
 
 
 def shap_explain_row_plot(
@@ -656,7 +683,7 @@ def shap_explain_row_plot(
         figsize=(16, 9),  # type: Union[List[float], Tuple[float]]
         plot_type="barplot",  # type: str
         contribution_type="both"  # type: str
-):  # type: (...) -> plt.Figure
+):  # type: (...) -> H2OFigureContainer
     """
     SHAP local explanation
 
@@ -771,7 +798,7 @@ def shap_explain_row_plot(
         ))
         plt.gca().set_axisbelow(True)
         fig = plt.gcf()
-        return fig
+        return H2OFigureContainer(fig)
 
     elif plot_type == "breakdown":
         if columns is None:
@@ -823,7 +850,7 @@ def shap_explain_row_plot(
         plt.ylabel("Feature")
         plt.gca().set_axisbelow(True)
         fig = plt.gcf()
-        return fig
+        return H2OFigureContainer(fig)
 
 
 def _get_top_n_levels(column, top_n):
@@ -1020,7 +1047,7 @@ def pd_plot(
         if is_factor:
             plt.xticks(rotation=45, rotation_mode="anchor", ha="right")
         fig = plt.gcf()
-        return fig
+        return H2OFigureContainer(fig, tmp._data, tmp.columns)
 
 
 def pd_multi_plot(
@@ -1034,7 +1061,7 @@ def pd_multi_plot(
         figsize=(16, 9),  # type: Union[Tuple[float], List[float]]
         colormap="Dark2",  # type: str
         markers=["o", "v", "s", "P", "*", "D", "X", "^", "<", ">", "."]  # type: List[str]
-):  # type: (...) -> plt.Figure
+):  # type: (...) -> H2OFigureContainer
     """
     Plot partial dependencies of a variable across multiple models.
 
@@ -1161,7 +1188,7 @@ def pd_multi_plot(
         if is_factor:
             plt.xticks(rotation=45, rotation_mode="anchor", ha="right")
         fig = plt.gcf()
-        return fig
+        return H2OFigureContainer(fig)
 
 
 def ice_plot(
@@ -1172,7 +1199,7 @@ def ice_plot(
         max_levels=30,  # type: int
         figsize=(16, 9),  # type: Union[Tuple[float], List[float]]
         colormap="plasma",  # type: str
-):  # type: (...) -> plt.Figure
+):  # type: (...) -> H2OFigureContainer
     """
     Plot Individual Conditional Expectations (ICE) for each decile
 
@@ -1287,7 +1314,7 @@ def ice_plot(
         if is_factor:
             plt.xticks(rotation=45, rotation_mode="anchor", ha="right")
         fig = plt.gcf()
-        return fig
+        return H2OFigureContainer(fig)
 
 
 def _has_varimp(model):
@@ -1420,7 +1447,7 @@ def varimp_heatmap(
         cluster=True,  # type: bool
         colormap="RdYlBu_r"  # type: str
 ):
-    # type: (...) -> plt.Figure
+    # type: (...) -> H2OFigureContainer
     """
     Variable Importance Heatmap across a group of models
 
@@ -1463,38 +1490,6 @@ def varimp_heatmap(
     >>> aml.varimp_heatmap()
     """
     plt = get_matplotlib_pyplot(False, raise_if_not_available=True)
-    varimps, model_ids,  x = varimp_matrix(models, cluster, top_n, False)
-
-    plt.figure(figsize=figsize)
-    plt.imshow(varimps, cmap=plt.get_cmap(colormap))
-    plt.xticks(range(len(model_ids)), model_ids,
-               rotation=45, rotation_mode="anchor", ha="right")
-    plt.yticks(range(len(x)), x)
-    plt.colorbar()
-    plt.xlabel("Model Id")
-    plt.ylabel("Feature")
-    plt.title("Variable Importance Heatmap")
-    plt.grid(False)
-    fig = plt.gcf()
-    return fig
-
-
-def varimp_matrix(
-        models,  # type: Union[h2o.automl._base.H2OAutoMLBaseMixin, List[h2o.model.ModelBase]]
-        top_n=20,  # type: int
-        cluster=True,  # type: bool
-        use_pandas=True  # type: bool
-):
-    # type: (...) -> Union[pandas.DataFrame, Tuple[numpy.ndarray, List[str], List[str]]]
-    """
-        Get data that are used to build varimp_heatmap plot.
-
-        :param models: H2O AutoML object or list of H2O models
-        :param top_n: use just top n models (applies only when used with H2OAutoML)
-        :param cluster: if True, cluster the models and variables
-        :param use_pandas: if True, try to return pandas DataFrame. Otherwise return a triple (varimps, model_ids, variable_names)
-        :returns: either pandas DataFrame (if use_pandas == True) or a triple (varimps, model_ids, variable_names)
-    """
     if isinstance(models, h2o.automl._base.H2OAutoMLBaseMixin):
         model_ids = [model_id[0] for model_id in models.leaderboard[:, "model_id"]
             .as_data_frame(use_pandas=False, header=False) if _has_varimp(model_id[0])]
@@ -1524,11 +1519,18 @@ def varimp_matrix(
         varimps = varimps.transpose()
 
     model_ids = _shorten_model_ids([model.model_id for model in models])
-    if use_pandas:
-        import pandas
-        return pandas.DataFrame(varimps, columns=model_ids, index=x)
-
-    return varimps, model_ids, x
+    plt.figure(figsize=figsize)
+    plt.imshow(varimps, cmap=plt.get_cmap(colormap))
+    plt.xticks(range(len(model_ids)), model_ids,
+               rotation=45, rotation_mode="anchor", ha="right")
+    plt.yticks(range(len(x)), x)
+    plt.colorbar()
+    plt.xlabel("Model Id")
+    plt.ylabel("Feature")
+    plt.title("Variable Importance Heatmap")
+    plt.grid(False)
+    fig = plt.gcf()
+    return H2OFigureContainer(fig, varimps, model_ids, x)
 
 
 def model_correlation_heatmap(
@@ -1540,7 +1542,7 @@ def model_correlation_heatmap(
         figsize=(13, 13),  # type: Tuple[float]
         colormap="RdYlBu_r"  # type: str
 ):
-    # type: (...) -> plt.Figure
+    # type: (...) -> H2OFigureContainer
     """
     Model Prediction Correlation Heatmap
 
@@ -1581,48 +1583,6 @@ def model_correlation_heatmap(
     >>> aml.model_correlation_heatmap(test)
     """
     plt = get_matplotlib_pyplot(False, raise_if_not_available=True)
-    corr, model_ids = model_correlation_matrix(models, frame, top_n, cluster_models, use_pandas=False)
-
-    if triangular:
-        corr = np.where(np.triu(np.ones_like(corr), k=1).astype(bool), float("nan"), corr)
-
-    plt.figure(figsize=figsize)
-    plt.imshow(corr, cmap=plt.get_cmap(colormap), clim=(0.5, 1))
-    plt.xticks(range(len(model_ids)), model_ids, rotation=45, rotation_mode="anchor", ha="right")
-    plt.yticks(range(len(model_ids)), model_ids)
-    plt.colorbar()
-    plt.title("Model Correlation")
-    plt.xlabel("Model Id")
-    plt.ylabel("Model Id")
-    plt.grid(False)
-    for t in plt.gca().xaxis.get_ticklabels():
-        if _interpretable(t.get_text()):
-            t.set_color("red")
-    for t in plt.gca().yaxis.get_ticklabels():
-        if _interpretable(t.get_text()):
-            t.set_color("red")
-    fig = plt.gcf()
-    return fig
-
-
-def model_correlation_matrix(
-        models,  # type: Union[h2o.automl._base.H2OAutoMLBaseMixin, List[h2o.model.ModelBase]]
-        frame,  # type: h2o.H2OFrame
-        top_n=20,  # type: int
-        cluster_models=True,  # type: bool
-        use_pandas=True  # type: bool
-):
-    # type: (...) -> Union[pandas.DataFrame, Tuple[numpy.ndarray, List[str]]]
-    """
-    Get data that are used to build model_correlation_heatmap plot.
-
-    :param models: H2OAutoML object or a list of H2O models
-    :param frame: H2OFrame
-    :param top_n: show just top n models (applies only when used with H2OAutoML)
-    :param cluster_models: if True, cluster the models
-    :param use_pandas: if True, try to return pandas DataFrame. Otherwise return a tuple (correlation_matrix, model_ids)
-    :returns: either pandas DataFrame (if use_pandas == True) or a tuple (correlation_matrix, model_ids)
-    """
     if isinstance(models, h2o.automl._base.H2OAutoMLBaseMixin):
         model_ids = [model_id[0] for model_id in models.leaderboard[:, "model_id"]
             .as_data_frame(use_pandas=False, header=False)]
@@ -1657,12 +1617,26 @@ def model_correlation_matrix(
         models = [models[i] for i in order]
 
     model_ids = _shorten_model_ids([model.model_id for model in models])
+    if triangular:
+        corr = np.where(np.triu(np.ones_like(corr), k=1).astype(bool), float("nan"), corr)
 
-    if use_pandas:
-        import pandas
-        return pandas.DataFrame(corr, columns=model_ids, index=model_ids)
-
-    return corr, model_ids
+    plt.figure(figsize=figsize)
+    plt.imshow(corr, cmap=plt.get_cmap(colormap), clim=(0.5, 1))
+    plt.xticks(range(len(model_ids)), model_ids, rotation=45, rotation_mode="anchor", ha="right")
+    plt.yticks(range(len(model_ids)), model_ids)
+    plt.colorbar()
+    plt.title("Model Correlation")
+    plt.xlabel("Model Id")
+    plt.ylabel("Model Id")
+    plt.grid(False)
+    for t in plt.gca().xaxis.get_ticklabels():
+        if _interpretable(t.get_text()):
+            t.set_color("red")
+    for t in plt.gca().yaxis.get_ticklabels():
+        if _interpretable(t.get_text()):
+            t.set_color("red")
+    fig = plt.gcf()
+    return H2OFigureContainer(fig, corr, model_ids, model_ids)
 
 
 def residual_analysis_plot(
@@ -1670,7 +1644,7 @@ def residual_analysis_plot(
         frame,  # type: h2o.H2OFrame
         figsize=(16, 9)  # type: Tuple[float]
 ):
-    # type: (...) -> plt.Figure
+    # type: (...) -> H2OFigureContainer
     """
     Residual Analysis
 
@@ -1744,7 +1718,7 @@ def residual_analysis_plot(
     plt.ylim(ylims)
 
     fig = plt.gcf()
-    return fig
+    return H2OFigureContainer(fig, residuals)
 
 
 def _is_tree_model(model):
@@ -2085,6 +2059,7 @@ def explain(
                                                figsize=figsize)))
 
     if len(models_with_varimp) > 0 and "varimp" in explanations:
+        varimps = _consolidate_varimps(models_with_varimp[0])
         result["varimp"] = H2OExplanation()
         result["varimp"]["header"] = display(Header("Variable Importance"))
         result["varimp"]["description"] = display(Description("variable_importance"))
@@ -2095,9 +2070,8 @@ def explain(
             varimp_plot.set_figwidth(figsize[0])
             varimp_plot.set_figheight(figsize[1])
             varimp_plot.gca().set_title("Variable Importance for \"{}\"".format(model.model_id))
-            result["varimp"]["plots"][model.model_id] = display(varimp_plot)
+            result["varimp"]["plots"][model.model_id] = display(H2OFigureContainer(varimp_plot, {"Variable": list(varimps.keys()), "Variable Importance": list(varimps.values())}))
         if columns_of_interest is None:
-            varimps = _consolidate_varimps(models_with_varimp[0])
             columns_of_interest = sorted(varimps.keys(), key=lambda k: -varimps[k])[
                                   :min(top_n_features, len(varimps))]
     else:
