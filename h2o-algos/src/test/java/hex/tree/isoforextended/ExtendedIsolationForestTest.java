@@ -9,7 +9,10 @@ import water.fvec.Frame;
 import water.fvec.TestFrameBuilder;
 import water.fvec.Vec;
 import water.util.FrameUtils;
+import water.util.PrettyPrint;
 
+import java.lang.instrument.Instrumentation;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 
 import static org.junit.Assert.*;
@@ -34,8 +37,6 @@ public class ExtendedIsolationForestTest extends TestUtil {
             p._seed = 0xDECAF;
             p._ntrees = 100;
             p.extension_level = train.numCols() - 1;
-            
-            DKV.put(train);
 
             ExtendedIsolationForest eif = new ExtendedIsolationForest(p);
             ExtendedIsolationForestModel model = eif.trainModel().get();
@@ -139,12 +140,55 @@ public class ExtendedIsolationForestTest extends TestUtil {
     @Test
     public void testBasicWithCategoricalData() {
         try {
+            LOG.info("testBasicWithCategoricalData start");
             Scope.enter();
             Frame train = new TestFrameBuilder()
                     .withVecTypes(Vec.T_NUM, Vec.T_CAT, Vec.T_CAT, Vec.T_NUM)
                     .withDataForCol(0, ard(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
                     .withDataForCol(1, ar("B", "C", "D", "E", "B", "C", "D", "E", "A", "B"))
                     .withDataForCol(2, ar("BB", "CC", "DD", "EE", "BB", "CC", "DD", "EV", "AW", "BW"))
+                    .withDataForCol(3, ard(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
+                    .build();
+            Scope.track(train);
+
+            ExtendedIsolationForestModel.ExtendedIsolationForestParameters p =
+                    new ExtendedIsolationForestModel.ExtendedIsolationForestParameters();
+            p._train = train._key;
+            p._seed = 0xDECAF;
+            p._ntrees = 100;
+            p._sample_size = 2;
+            p.extension_level = train.numCols() - 1;
+
+            System.out.println("Building");
+            ExtendedIsolationForest eif = new ExtendedIsolationForest(p);
+            ExtendedIsolationForestModel model = eif.trainModel().get();
+            Scope.track_generic(model);
+            assertNotNull(model);
+            System.out.println("Built");
+
+            LOG.info("score");
+            Frame out = model.score(train);
+            Scope.track_generic(out);
+            assertArrayEquals(new String[]{"anomaly_score", "mean_length"}, out.names());
+            assertEquals(train.numRows(), out.numRows());
+            LOG.info("scored");
+        } finally {
+            Scope.exit();
+        }
+    }
+
+    /**
+     * String data will be ignored
+     */
+    @Test
+    public void testBasicWithStringData() {
+        try {
+            Scope.enter();
+            Frame train = new TestFrameBuilder()
+                    .withVecTypes(Vec.T_NUM, Vec.T_CAT, Vec.T_STR, Vec.T_NUM)
+                    .withDataForCol(0, ard(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
+                    .withDataForCol(1, ar("B", "C", "D", "E", "B", "C", "D", "E", "A", "B"))
+                    .withDataForCol(2, ar("BB", "CC", "DD", "EEa", "BB", "CC", "DD", "EV", "AW", "BW"))
                     .withDataForCol(3, ard(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
                     .build();
             Scope.track(train);
