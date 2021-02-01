@@ -18,6 +18,40 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 
+/**
+ * <h2>H2O Auto-Recovery Support</h2>
+ * 
+ * <p>This class encapsulates what is the core of H2O's (auto)recovery support. It manages
+ * storing of data needed to recover a {@link Recoverable} process as well as performing
+ * the actual recovery and re-start of such process.</p>
+ * 
+ * <h3>Preparing for recovery</h3>
+ * 
+ * <p>A {@link Recoverable} will instantiate a {@link Recovery} instance at start and call
+ * the {@link Recovery#onStart(Recoverable, Job)} method first. This should provide sufficient
+ * data to re-instantiate the Recoverable later on. Every time a {@link Model} is successfully
+ * built the Recoverable should call {@link Recovery#onModel(Recoverable, Key)} method so that
+ * this Model can be later recovered and does not need to be trained again. If a Recoverable
+ * process finishes successfully it will call {@link Recovery#onDone(Recoverable)}, this will
+ * lead to all stored data being cleaned up.</p>
+ * 
+ * <h3>Recovering manually</h3>
+ * 
+ * <p>Recoverable objects may use this class to restore their state in case user has sent such a
+ * request. This is useful since this class implements mechanisms not implemented by other
+ * components in the system (such as storing parameter references).</p>
+ * 
+ * <h3>Auto-Recovery</h3>
+ * 
+ * <p>Calling {@link Recovery#autoRecover(Optional)} will trigger an auto-recovery. The method
+ * will check if there is any recovery data present in the supplied directory and if there is
+ * it will load all the stored data, references and models and resume the Recoverable process.
+ * It is the responsibility of the Recoverable to check in what state was it stored (models
+ * already trained) and continue on a best-effort basis with its job such that no unnecessary
+ * repetition of work is done.</p>
+ * 
+ * @param <T> Type of object to be recovered
+ */
 public class Recovery<T extends Keyed> {
     
     private static final Logger LOG = Logger.getLogger(Recovery.class);
@@ -29,10 +63,17 @@ public class Recovery<T extends Keyed> {
     public static final String INFO_RESULT_KEY = "resultKey";
     public static final String INFO_JOB_KEY = "jobKey";
 
-    public static void autoRecover(String autoRecoveryDir) {
-        if (autoRecoveryDir == null || autoRecoveryDir.length() == 0) {
+    /**
+     * Will check the supplied directory for presence of recovery metadata and
+     * if found, trigger a recovery of interrupted Recoverable process.
+     * 
+     * @param autoRecoveryDirOpt directory from which to load recovery data
+     */
+    public static void autoRecover(Optional<String> autoRecoveryDirOpt) {
+        if (!autoRecoveryDirOpt.isPresent() || autoRecoveryDirOpt.get().length() == 0) {
             LOG.debug("Auto recovery dir not configured.");
         } else {
+            String autoRecoveryDir = autoRecoveryDirOpt.get();
             LOG.info("Initializing auto recovery from " + autoRecoveryDir);
             H2O.submitTask(new H2O.H2OCountedCompleter(H2O.MIN_PRIORITY) {
                 @Override
@@ -44,6 +85,10 @@ public class Recovery<T extends Keyed> {
         }
     }
 
+    /**
+     * {@link Frame} object referenced by params are stored in a distributed manner, hence we need to
+     * distinguish them from other types of {@link Keyed} references.
+     */
     public enum ReferenceType {
         FRAME, KEYED
     }
@@ -130,7 +175,7 @@ public class Recovery<T extends Keyed> {
         PersistUtils.write(referencesUri, ab -> ab.put(referenceKeyTypeMap));
     }
     
-    public void writeRecoveryInfo(final Recoverable<T> r, Key<Job> jobKey) {
+    private void writeRecoveryInfo(final Recoverable<T> r, Key<Job> jobKey) {
         Map<String, String> info = new HashMap<>();
         info.put(INFO_CLASS, r.getClass().getName());
         info.put(INFO_JOB_KEY, jobKey.toString());
@@ -157,6 +202,11 @@ public class Recovery<T extends Keyed> {
         }
     }
 
+    /**
+     * Will locate a references metadata file and load all objects mentioned in this file.
+     * 
+     * @param r a Recoverable whose references are to be loaded
+     */
     public void loadReferences(final Recoverable<T> r) {
         final URI referencesUri = FileUtils.getURI(storagePath + "/" + r.getKey() + REFERENCES_META_FILE_SUFFIX);
         Map<String, String> referencesMap = PersistUtils.read(referencesUri, AutoBuffer::get);
@@ -176,7 +226,7 @@ public class Recovery<T extends Keyed> {
         fs.blockForPending();
     }
     
-    public void autoRecover() {
+    void autoRecover() {
         URI recoveryMetaUri = FileUtils.getURI(recoveryMetaFile());
         if (!PersistUtils.exists(recoveryMetaUri)) {
             LOG.info("No auto-recovery information found.");

@@ -7,6 +7,9 @@ import water.Keyed;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * @param <T> type of object to be recovered
+ */
 public interface Recoverable<T extends Keyed> {
 
     /**

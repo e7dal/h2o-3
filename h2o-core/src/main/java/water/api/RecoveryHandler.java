@@ -5,6 +5,8 @@ import water.H2O;
 import water.Iced;
 import water.api.schemas3.SchemaV3;
 
+import java.util.Optional;
+
 import static water.api.API.Direction.INPUT;
 
 public class RecoveryHandler extends Handler {
@@ -23,7 +25,7 @@ public class RecoveryHandler extends Handler {
         } else {
             recoveryDir = H2O.ARGS.auto_recovery_dir;
         }
-        Recovery.autoRecover(recoveryDir);
+        Recovery.autoRecover(Optional.ofNullable(recoveryDir));
         return params;
     }
 
